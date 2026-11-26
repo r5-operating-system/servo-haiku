@@ -9,12 +9,12 @@
 
 | Piece | Version used | How to get it |
 |---|---|---|
-| Haiku x86_64 cross toolchain (`x86_64-unknown-haiku-gcc`, `g++`, `ar`, `strip`, and its `sysroot/` with Haiku's headers and libraries) | GCC 13.3.0 | A Haiku build tree: `configure --cross-tools-source <buildtools> --build-cross-tools x86_64`, then `jam -q haiku.hpkg` or any target that fills the sysroot. It is then at `<tree>/generated.x86_64/cross-tools-x86_64`. |
-| Haiku's host `package` tool (only for `pack-r5servo.py`) | from the same tree | `jam -q '<build>package'`; it is at `generated.x86_64/objects/linux/x86_64/release/tools/package/package`. |
+| Haiku x86_64 cross toolchain (`x86_64-unknown-haiku-gcc`, `g++`, `ar`, `strip`, and its `sysroot/` with Haiku's headers and libraries) | GCC 13.3.0 | A Haiku build tree: `configure --cross-tools-source <buildtools> --build-cross-tools x86_64`, then a jam build of an image (`jam -q @nightly-anyboot`). The image build links Haiku's libraries (`libbe.so`, `libroot.so`, …) into `sysroot/boot/system/develop/lib`, which the link of `libr5servo.so` needs. The toolchain is then `<tree>/generated.x86_64/cross-tools-x86_64`. |
+| Haiku's host `package` tool (only for `pack-r5servo.py`) | from the same tree | Built by that image build, at `generated.x86_64/objects/linux/x86_64/release/tools/package/package`. |
 | Rust through rustup, with `rust-src` | 1.99.1 | `rustup toolchain install --profile minimal -c rust-src 1.99.1`. The Haiku standard library is built from source (`-Zbuild-std`), so no Haiku target component is needed. |
 | LLVM's `libclang` (bindgen) | 21.1.8 | The release tarball `LLVM-21.1.8-Linux-X64.tar.xz` from github.com/llvm/llvm-project; `LIBCLANG_PATH` is its `lib/`. |
 | Host tools | | `gcc`, `g++` (SpiderMonkey's host tools), `python3` (3.11 or newer), `curl`, `patch`, `pkg-config`, `make`. `/usr/bin/time` is used for the timings if it is there. |
-| Disk and memory | | About 20 GB for `$WORK`, and 16 GB of memory for 4 jobs. |
+| Disk and memory | | About 20 GB for `$WORK`. R5 builds with 4 jobs in a WSL machine with 15 GB of memory. |
 
 ## Variables
 
@@ -30,6 +30,15 @@
 | `JOBS` | Parallel jobs for cargo. | `4` |
 | `EXTRA_PATH` | Put in front of `PATH`, for example a `pkg-config` or rustup's `cargo` when `CARGO_HOME/bin` has none. | |
 | `SERVO_REFRESH_PATCHES=1` | Unpack and patch the crates again. This rebuilds SpiderMonkey. | |
+
+In a Haiku build tree the sysroot's `develop/headers` and `develop/lib` are links into jam's packaging directory. Do not run a jam on that tree while this build runs: when jam repacks `haiku_devel`, headers such as `stdint.h` and `unistd.h` are briefly missing and SpiderMonkey fails with `fatal error: stdint.h: No such file or directory`. A copy of the toolchain with a real sysroot does not have this problem; the toolchain is relocatable:
+
+```sh
+X=~/haiku-cross-x86_64
+cp -a ~/haiku/generated.x86_64/cross-tools-x86_64/. $X/
+rm -rf $X/sysroot && cp -rL ~/haiku/generated.x86_64/cross-tools-x86_64/sysroot $X/sysroot
+HAIKU_CROSS_TOOLS=$X LIBCLANG_PATH=~/llvm/lib scripts/build-r5servo.sh
+```
 
 The script sets `PATH` itself to `EXTRA_PATH`, LLVM, the cross tools, `/usr/bin`, `/bin` and `CARGO_HOME/bin`, so other compilers on the host do not leak in.
 

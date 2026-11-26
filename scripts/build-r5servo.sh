@@ -245,7 +245,8 @@ step fetch cargo +"$RUST_TOOLCHAIN" fetch --locked --target "$TARGET"
 
 # SpiderMonkey's system wrapper does include_next <zlib.h>, and the Haiku
 # sysroot has libz.so without the header. The header is the one vendored in
-# libz-sys, which cargo fetch has unpacked.
+# libz-sys, which cargo fetch has unpacked. freetype-sys's bundled libpng
+# needs it too, and cc-rs does not read CPPFLAGS.
 ZLIB="$(ls -d "$CARGO_HOME"/registry/src/*/libz-sys-1.1.33/src/zlib 2>/dev/null | head -n 1)"
 if [ -z "$ZLIB" ]; then
 	echo "libz-sys 1.1.33 not found under $CARGO_HOME/registry/src" >&2
