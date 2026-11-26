@@ -1,0 +1,731 @@
+--- a/headers/private/runtime_loader/runtime_loader.h
++++ b/headers/private/runtime_loader/runtime_loader.h
+@@ -59,6 +59,12 @@
+ 	const void* commpage_address;
+ 	int abi_version;
+ 	int api_version;
++
++	// SPDX-SnippetBegin
++	// SPDX-License-Identifier: MIT
++	// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++	void (*init_initial_exec_tls)();
++	// SPDX-SnippetEnd
+ };
+ 
+ extern struct rld_export *__gRuntimeLoader;
+--- a/src/system/libroot/os/thread.c
++++ b/src/system/libroot/os/thread.c
+@@ -41,6 +41,13 @@
+ 
+ 	__heap_thread_init();
+ 
++	// SPDX-SnippetBegin
++	// SPDX-License-Identifier: MIT
++	// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++	if (__gRuntimeLoader->init_initial_exec_tls != NULL)
++		__gRuntimeLoader->init_initial_exec_tls();
++	// SPDX-SnippetEnd
++
+ 	returnCode = entry(thread->entry_argument);
+ 
+ 	_thread_do_exit_work();
+--- a/src/system/libroot/posix/pthread/pthread.cpp
++++ b/src/system/libroot/posix/pthread/pthread.cpp
+@@ -47,6 +47,13 @@
+ 
+ 	__heap_thread_init();
+ 
++	// SPDX-SnippetBegin
++	// SPDX-License-Identifier: MIT
++	// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++	if (__gRuntimeLoader->init_initial_exec_tls != NULL)
++		__gRuntimeLoader->init_initial_exec_tls();
++	// SPDX-SnippetEnd
++
+ 	pthread_exit(thread->entry(thread->entry_argument));
+ 	return 0;
+ }
+--- a/src/system/libroot/posix/time/timer_support.cpp
++++ b/src/system/libroot/posix/time/timer_support.cpp
+@@ -20,6 +20,7 @@
+ 
+ #include <libroot_private.h>
+ #include <pthread_private.h>
++#include <runtime_loader/runtime_loader.h>
+ #include <time_private.h>
+ #include <user_thread.h>
+ 
+@@ -65,6 +66,13 @@
+ 
+ 	get_user_thread()->pthread = &thread;
+ 
++	// SPDX-SnippetBegin
++	// SPDX-License-Identifier: MIT
++	// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++	if (__gRuntimeLoader->init_initial_exec_tls != NULL)
++		__gRuntimeLoader->init_initial_exec_tls();
++	// SPDX-SnippetEnd
++
+ 	// we have been started with deferred signals -- undefer them
+ 	undefer_signals();
+ 
+--- a/src/system/runtime_loader/elf_tls.h
++++ b/src/system/runtime_loader/elf_tls.h
+@@ -2,6 +2,12 @@
+  * Copyright 2014, Paweł Dziepak, pdziepak@quarnos.org.
+  * Distributed under the terms of the MIT License.
+  */
++
++/*
++ * The R5 change in this file is the SPDX snippet. Copyright 2026 R5OS
++ * Contributors. The Haiku copyright and the license above still cover the
++ * original work. The snippet is MIT.
++ */
+ #ifndef ELF_TLS_H
+ #define ELF_TLS_H
+ 
+@@ -14,7 +20,10 @@
+ 
+ class TLSBlockTemplate {
+ public:
+-						TLSBlockTemplate() { }
++						TLSBlockTemplate()
++							: fGeneration(0), fAddress(NULL), fFileSize(0),
++								fMemorySize(0), fAlignment(16), fStaticOffset(0),
++								fHasStaticOffset(false), fRelocated(false) { }
+ 	inline				TLSBlockTemplate(void* address, size_t fileSize,
+ 							size_t memorySize);
+ 
+@@ -26,12 +35,37 @@
+ 
+ 			TLSBlock	CreateBlock();
+ 
++			// SPDX-SnippetBegin
++			// SPDX-License-Identifier: MIT
++			// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++			size_t		Alignment() const	{ return fAlignment; }
++			size_t		FileSize() const	{ return fFileSize; }
++			size_t		MemorySize() const	{ return fMemorySize; }
++			const void*	Address() const	{ return fAddress; }
++			void		SetStaticOffset(size_t offset)
++							{ fStaticOffset = offset; fHasStaticOffset = true; }
++			size_t		StaticOffset() const	{ return fStaticOffset; }
++			bool		HasStaticOffset() const	{ return fHasStaticOffset; }
++			// The library's TLS image is mapped and relocated: a thread may
++			// copy it (Materialize()).
++			void		SetRelocated()	{ fRelocated = true; }
++			bool		IsRelocated() const	{ return fRelocated; }
++			// SPDX-SnippetEnd
++
+ private:
+ 			unsigned	fGeneration;
+ 
+ 			void*		fAddress;
+ 			size_t		fFileSize;
+ 			size_t		fMemorySize;
++			// SPDX-SnippetBegin
++			// SPDX-License-Identifier: MIT
++			// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++			size_t		fAlignment;
++			size_t		fStaticOffset;
++			bool		fHasStaticOffset;
++			bool		fRelocated;
++			// SPDX-SnippetEnd
+ };
+ 
+ class TLSBlockTemplates {
+@@ -47,30 +81,67 @@
+ 
+ 			TLSBlock	CreateBlock(unsigned dso);
+ 
++			// SPDX-SnippetBegin
++			// SPDX-License-Identifier: MIT
++			// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++			bool		HasStaticPlacement(unsigned dso) const;
++			uint64		StaticPlacement(unsigned dso) const;
++			void		Materialize();
++			void		SetRelocated(unsigned dso);
++			// SPDX-SnippetEnd
++
+ private:
+ 	inline				TLSBlockTemplates();
+ 
++			// SPDX-SnippetBegin
++			// SPDX-License-Identifier: MIT
++			// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++			void		_AssignStaticOffset(unsigned dso);
++			addr_t		_GapFromThreadPointer() const;
++			bool		_EnsureMapped(addr_t threadPointer, addr_t bytesFromTp);
++			// SPDX-SnippetEnd
++
+ 	static	TLSBlockTemplates*	fInstance;
+ 
+ 			unsigned	fGeneration;
+ 
+ 			utility::vector<TLSBlockTemplate>	fTemplates;
+ 			utility::vector<unsigned>	fFreeDSOs;
++
++			// SPDX-SnippetBegin
++			// SPDX-License-Identifier: MIT
++			// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++			bool		fStaticBaseReady;
++			addr_t		fStaticBase;
++			size_t		fStaticNext;
++			// SPDX-SnippetEnd
+ };
+ 
+ 
+ TLSBlockTemplate::TLSBlockTemplate(void* address, size_t fileSize,
+ 	size_t memorySize)
+ 	:
++	fGeneration(0),
+ 	fAddress(address),
+ 	fFileSize(fileSize),
+-	fMemorySize(memorySize)
++	fMemorySize(memorySize),
++	fAlignment(16),
++	fStaticOffset(0),
++	fHasStaticOffset(false),
++	fRelocated(false)
+ {
+ }
+ 
+ 
+ void*	get_tls_address(unsigned dso, addr_t offset);
+ void	destroy_thread_tls();
++// SPDX-SnippetBegin
++// SPDX-License-Identifier: MIT
++// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++void	tls_reinit_after_fork();
++// SPDX-SnippetEnd
++void	materialize_initial_exec_tls();
++uint64	r5_initial_exec_offset(unsigned dso, uint64 symbolOffset, int64 addend);
+ 
+ 
+ #endif	// ELF_TLS_H
+--- a/src/system/runtime_loader/elf_tls.cpp
++++ b/src/system/runtime_loader/elf_tls.cpp
+@@ -8,12 +8,22 @@
+ #include <stdlib.h>
+ #include <string.h>
+ 
++#include <OS.h>
+ #include <support/TLS.h>
++#include <syscalls.h>
+ 
+ #include <tls.h>
+ 
++// SPDX-SnippetBegin
++// SPDX-License-Identifier: MIT
++// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++#include <locks.h>
++// SPDX-SnippetEnd
++
+ #include <util/kernel_cpp.h>
+ 
++#include "r5_tpoff.h"
++
+ 
+ class TLSBlock {
+ public:
+@@ -79,6 +89,15 @@
+ TLSBlockTemplate::SetBaseAddress(addr_t baseAddress)
+ {
+ 	fAddress = (void*)((addr_t)fAddress + baseAddress);
++	// SPDX-SnippetBegin
++	// SPDX-License-Identifier: MIT
++	// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++#if !defined(__x86_64__)
++	// x86_64 marks the image after its relocation (arch_relocate.cpp, R5);
++	// the other architectures have no such hook yet and keep the old point.
++	fRelocated = true;
++#endif
++	// SPDX-SnippetEnd
+ }
+ 
+ 
+@@ -96,6 +115,22 @@
+ }
+ 
+ 
++// SPDX-SnippetBegin
++// SPDX-License-Identifier: MIT
++// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++// Every new thread copies the static TLS images (Materialize(), from the
++// thread entry in libroot) while another thread may load or unload a library
++// (Register(), SetBaseAddress(), Unregister(), under the loader's own lock in
++// elf.cpp). Without this lock a thread started during dlopen() read the
++// template list while it grew, and copied a library's TLS image from its
++// unrelocated file address: a segment violation in memcpy (QEMU, Aomi
++// starting while libr5servo.so loads). The loader's lock is taken first and
++// this one second, never the other way round.
++static recursive_lock sTemplatesLock
++	= RECURSIVE_LOCK_INITIALIZER("runtime loader tls templates");
++// SPDX-SnippetEnd
++
++
+ TLSBlockTemplates&
+ TLSBlockTemplates::Get()
+ {
+@@ -108,18 +143,30 @@
+ unsigned
+ TLSBlockTemplates::Register(const TLSBlockTemplate& block)
+ {
++	// SPDX-SnippetBegin
++	// SPDX-License-Identifier: MIT
++	// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++	RecursiveLocker locker(sTemplatesLock);
++	// SPDX-SnippetEnd
+ 	unsigned dso;
+ 
+-	if (!fFreeDSOs.empty()) {
+-		dso = fFreeDSOs.back();
+-		fFreeDSOs.pop_back();
+-		fTemplates[dso] = block;
+-	} else {
+-		dso = fTemplates.size();
+-		fTemplates.push_back(block);
+-	}
++	// SPDX-SnippetBegin
++	// SPDX-License-Identifier: MIT
++	// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++	// A new slot every time, never a freed one: Materialize() keeps per
++	// thread how many slots it copied, in order. A reused low slot would be
++	// skipped by threads that already passed it, and a thread that started
++	// during the load would stop before libraries above it.
++	dso = fTemplates.size();
++	fTemplates.push_back(block);
++	// SPDX-SnippetEnd
+ 
+ 	fTemplates[dso].SetGeneration(fGeneration);
++	// SPDX-SnippetBegin
++	// SPDX-License-Identifier: MIT
++	// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++	_AssignStaticOffset(dso);
++	// SPDX-SnippetEnd
+ 	return dso;
+ }
+ 
+@@ -130,7 +177,21 @@
+ 	if (dso == unsigned(-1))
+ 		return;
+ 
++	// SPDX-SnippetBegin
++	// SPDX-License-Identifier: MIT
++	// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++	RecursiveLocker locker(sTemplatesLock);
++	// SPDX-SnippetEnd
+ 	fGeneration++;
++	// SPDX-SnippetBegin
++	// SPDX-License-Identifier: MIT
++	// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++	// The library's memory goes away. A thread that starts later must not
++	// copy its TLS image (Materialize() skips a template with no static
++	// offset).
++	fTemplates[dso] = TLSBlockTemplate();
++	fTemplates[dso].SetGeneration(fGeneration);
++	// SPDX-SnippetEnd
+ 	fFreeDSOs.push_back(dso);
+ }
+ 
+@@ -138,6 +199,11 @@
+ void
+ TLSBlockTemplates::SetBaseAddress(unsigned dso, addr_t baseAddress)
+ {
++	// SPDX-SnippetBegin
++	// SPDX-License-Identifier: MIT
++	// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++	RecursiveLocker locker(sTemplatesLock);
++	// SPDX-SnippetEnd
+ 	if (dso != unsigned(-1))
+ 		fTemplates[dso].SetBaseAddress(baseAddress);
+ }
+@@ -146,6 +212,11 @@
+ unsigned
+ TLSBlockTemplates::GetGeneration(unsigned dso) const
+ {
++	// SPDX-SnippetBegin
++	// SPDX-License-Identifier: MIT
++	// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++	RecursiveLocker locker(sTemplatesLock);
++	// SPDX-SnippetEnd
+ 	if (dso == unsigned(-1))
+ 		return fGeneration;
+ 	return fTemplates[dso].Generation();
+@@ -155,13 +226,21 @@
+ TLSBlock
+ TLSBlockTemplates::CreateBlock(unsigned dso)
+ {
++	// SPDX-SnippetBegin
++	// SPDX-License-Identifier: MIT
++	// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++	RecursiveLocker locker(sTemplatesLock);
++	// SPDX-SnippetEnd
+ 	return fTemplates[dso].CreateBlock();
+ }
+ 
+ 
+ TLSBlockTemplates::TLSBlockTemplates()
+ 	:
+-	fGeneration(0)
++	fGeneration(0),
++	fStaticBaseReady(false),
++	fStaticBase(0),
++	fStaticNext(0)
+ {
+ }
+ 
+@@ -293,6 +372,14 @@
+ 		fGeneration = new Generation;
+ 		if (fGeneration == NULL)
+ 			return B_NO_MEMORY;
++// SPDX-SnippetBegin
++// SPDX-License-Identifier: MIT
++// SPDX-SnippetCopyrightText: 2026 Witold Bołt
++		// A new vector has no blocks yet, so none of them can be stale.
++		// It starts at the templates' generation. At 0, unloading any TLS
++		// image makes the next access destroy the blocks just created.
++		fGeneration->SetCounter(TLSBlockTemplates::Get().GetGeneration(-1));
++// SPDX-SnippetEnd
+ 	}
+ 
+ 	*(Generation**)*fVector = fGeneration;
+@@ -305,6 +392,21 @@
+ void*
+ get_tls_address(unsigned dso, addr_t offset)
+ {
++	// SPDX-SnippetBegin
++	// SPDX-License-Identifier: MIT
++	// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++	// An executable writes an initial-exec TLS symbol at a fixed offset from
++	// the thread pointer. A library reads that same symbol through
++	// __tls_get_addr. The static image is the one the relocation names. A
++	// template without a static offset keeps the dynamic block.
++	TLSBlockTemplates& templates = TLSBlockTemplates::Get();
++	if (templates.HasStaticPlacement(dso)) {
++		materialize_initial_exec_tls();
++		addr_t threadPointer = (addr_t)tls_get(TLS_BASE_ADDRESS_SLOT);
++		return (void*)(threadPointer + templates.StaticPlacement(dso) + offset);
++	}
++	// SPDX-SnippetEnd
++
+ 	DynamicThreadVector dynamicThreadVector;
+ 	TLSBlock& block = dynamicThreadVector[dso];
+ 	if (block.IsInvalid())
+@@ -319,3 +421,164 @@
+ 	DynamicThreadVector().DestroyAll();
+ }
+ 
++
++// SPDX-SnippetBegin
++// SPDX-License-Identifier: MIT
++// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++
++void
++TLSBlockTemplates::_AssignStaticOffset(unsigned dso)
++{
++	if (!fStaticBaseReady) {
++		fStaticBase = _GapFromThreadPointer();
++		// The first 16 bytes of the static image hold how many templates
++		// this thread has already copied.
++		fStaticNext = 16;
++		fStaticBaseReady = true;
++	}
++
++	TLSBlockTemplate& stored = fTemplates[dso];
++	size_t alignment = stored.Alignment();
++	if (alignment < 1)
++		alignment = 1;
++	size_t offset = (fStaticNext + alignment - 1) & ~(alignment - 1);
++	stored.SetStaticOffset(offset);
++	fStaticNext = offset + stored.MemorySize();
++}
++
++
++addr_t
++TLSBlockTemplates::_GapFromThreadPointer() const
++{
++	addr_t threadPointer = (addr_t)tls_get(TLS_BASE_ADDRESS_SLOT);
++	area_info info;
++	ssize_t cookie = 0;
++	while (_kern_get_next_area_info(B_CURRENT_TEAM, &cookie, &info) == B_OK) {
++		addr_t start = (addr_t)info.address;
++		addr_t end = start + info.size;
++		if (threadPointer >= start && threadPointer < end) {
++			addr_t gap = end - threadPointer;
++			return (gap + 15) & ~(addr_t)15;
++		}
++	}
++
++	// Past the 64 TLS slots when the stack area cannot be seen yet.
++	return 4096;
++}
++
++
++bool
++TLSBlockTemplates::_EnsureMapped(addr_t threadPointer, addr_t bytesFromTp)
++{
++	area_info info;
++	ssize_t cookie = 0;
++	while (_kern_get_next_area_info(B_CURRENT_TEAM, &cookie, &info) == B_OK) {
++		addr_t start = (addr_t)info.address;
++		addr_t end = start + info.size;
++		if (threadPointer < start || threadPointer >= end)
++			continue;
++
++		addr_t need = threadPointer + bytesFromTp;
++		if (need <= end)
++			return true;
++
++		size_t newSize = info.size + (need - end);
++		newSize = (newSize + B_PAGE_SIZE - 1) & ~(B_PAGE_SIZE - 1);
++		return _kern_resize_area(info.area, newSize) == B_OK;
++	}
++	return false;
++}
++
++
++bool
++TLSBlockTemplates::HasStaticPlacement(unsigned dso) const
++{
++	RecursiveLocker locker(sTemplatesLock);
++	return dso < fTemplates.size() && fTemplates[dso].HasStaticOffset();
++}
++
++
++uint64
++TLSBlockTemplates::StaticPlacement(unsigned dso) const
++{
++	RecursiveLocker locker(sTemplatesLock);
++	if (dso >= fTemplates.size() || !fTemplates[dso].HasStaticOffset())
++		return fStaticBase;
++	return fStaticBase + fTemplates[dso].StaticOffset();
++}
++
++
++void
++TLSBlockTemplates::Materialize()
++{
++	RecursiveLocker locker(sTemplatesLock);
++	if (!fStaticBaseReady || fStaticNext <= 16)
++		return;
++
++	addr_t threadPointer = (addr_t)tls_get(TLS_BASE_ADDRESS_SLOT);
++	if (!_EnsureMapped(threadPointer, fStaticBase + fStaticNext))
++		return;
++
++	uint8* base = (uint8*)(threadPointer + fStaticBase);
++	uint64 done = *(uint64*)base;
++	unsigned count = fTemplates.size();
++	for (unsigned i = 0; i < fTemplates.size(); i++) {
++		if ((uint64)i < done)
++			continue;
++		TLSBlockTemplate& templ = fTemplates[i];
++		if (!templ.HasStaticOffset())
++			continue;
++		if (!templ.IsRelocated()) {
++			// Still being loaded: its image is copied by the next call on
++			// this thread, from where it really is.
++			count = i;
++			break;
++		}
++		uint8* dest = base + templ.StaticOffset();
++		if (templ.Address() != NULL && templ.FileSize() > 0)
++			memcpy(dest, templ.Address(), templ.FileSize());
++		if (templ.MemorySize() > templ.FileSize()) {
++			memset(dest + templ.FileSize(), 0,
++				templ.MemorySize() - templ.FileSize());
++		}
++	}
++	*(uint64*)base = count;
++}
++
++
++void
++TLSBlockTemplates::SetRelocated(unsigned dso)
++{
++	RecursiveLocker locker(sTemplatesLock);
++	if (dso < fTemplates.size())
++		fTemplates[dso].SetRelocated();
++}
++
++
++void
++tls_reinit_after_fork()
++{
++	// The child has only the forking thread; a lock another thread held is
++	// free again.
++	recursive_lock_init(&sTemplatesLock, "runtime loader tls templates");
++}
++
++
++void
++materialize_initial_exec_tls()
++{
++	TLSBlockTemplates::Get().Materialize();
++}
++
++
++uint64
++r5_initial_exec_offset(unsigned dso, uint64 symbolOffset, int64 addend)
++{
++	uint64 placement = 0;
++	if (dso != unsigned(-1))
++		placement = TLSBlockTemplates::Get().StaticPlacement(dso);
++	return r5_tpoff_offset(placement, symbolOffset, addend);
++}
++
++// SPDX-SnippetEnd
++
+--- /dev/null
++++ b/src/system/runtime_loader/r5_tpoff.h
+@@ -0,0 +1,22 @@
++/*
++ * SPDX-FileCopyrightText: 2026 R5OS Contributors
++ * SPDX-License-Identifier: MIT
++ */
++#ifndef R5_TPOFF_H
++#define R5_TPOFF_H
++
++#include <stdint.h>
++
++/* Offset from the thread pointer for an initial-exec TLS symbol.
++ * templateBase is where this image's TLS template bytes are placed,
++ * relative to the thread pointer. symbolOffset is the symbol's offset
++ * in that template. addend is the relocation addend.
++ * A load from the thread pointer uses this offset.
++ */
++static inline uint64_t
++r5_tpoff_offset(uint64_t templateBase, uint64_t symbolOffset, int64_t addend)
++{
++	return templateBase + symbolOffset + (uint64_t)addend;
++}
++
++#endif
+--- a/src/system/runtime_loader/elf_load_image.cpp
++++ b/src/system/runtime_loader/elf_load_image.cpp
+@@ -8,6 +8,12 @@
+  * Distributed under the terms of the NewOS License.
+  */
+ 
++/*
++ * The R5 change in this file is the SPDX snippet. Copyright 2026 R5OS
++ * Contributors. The Haiku copyright and the licenses above still cover the
++ * original work. The snippet is MIT.
++ */
++
+ #include "elf_load_image.h"
+ 
+ #include <stdio.h>
+@@ -679,6 +685,15 @@
+ err3:
+ 	unmap_image(image);
+ err2:
++	// SPDX-SnippetBegin
++	// SPDX-License-Identifier: MIT
++	// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++	// parse_program_headers() registered the image's TLS template. A failed
++	// load gives it back; otherwise it stays unrelocated for good and new
++	// threads stop copying TLS images at it (elf_tls.cpp, Materialize()).
++	TLSBlockTemplates::Get().Unregister(image->dso_tls_id);
++	image->dso_tls_id = unsigned(-1);
++	// SPDX-SnippetEnd
+ 	delete_image_struct(image);
+ err1:
+ 	_kern_close(fd);
+--- a/src/system/runtime_loader/export.cpp
++++ b/src/system/runtime_loader/export.cpp
+@@ -51,6 +51,12 @@
+ 	status_t returnstatus = B_OK;
+ 	if (status_t status = elf_reinit_after_fork())
+ 		returnstatus = status;
++	// SPDX-SnippetBegin
++	// SPDX-License-Identifier: MIT
++	// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++	// Another thread may have held the TLS template lock at fork().
++	tls_reinit_after_fork();
++	// SPDX-SnippetEnd
+ 	if (status_t status = heap_reinit_after_fork())
+ 		returnstatus = status;
+ 	if (status_t status = commpage_reinit_after_fork())
+@@ -93,6 +99,11 @@
+ {
+ 	gRuntimeLoader.program_args = gProgramArgs;
+ 	gRuntimeLoader.commpage_address = __gCommPageAddress;
++	// SPDX-SnippetBegin
++	// SPDX-License-Identifier: MIT
++	// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++	gRuntimeLoader.init_initial_exec_tls = materialize_initial_exec_tls;
++	// SPDX-SnippetEnd
+ }
+ 
+ 
+--- a/src/system/runtime_loader/arch/x86_64/arch_relocate.cpp
++++ b/src/system/runtime_loader/arch/x86_64/arch_relocate.cpp
+@@ -3,6 +3,15 @@
+  * Distributed under the terms of the MIT License.
+  */
+ 
++/*
++ * The R5 change in this file is the SPDX snippet. Copyright 2026 R5OS
++ * Contributors. The Haiku copyright and the license above still cover the
++ * original work. The snippet is MIT.
++ * Storing the TLS symbol value alone would be wrong: %fs is the slot array,
++ * not the ELF TLS block. The stored value is the offset from %fs to the
++ * template bytes placed for the startup images.
++ */
++
+ 
+ #include "runtime_loader_private.h"
+ 
+@@ -12,6 +21,8 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ 
++#include "elf_tls.h"
++
+ 
+ static status_t
+ relocate_rela(image_t* rootImage, image_t* image, Elf64_Rela* rel,
+@@ -65,12 +76,24 @@
+ 			case R_X86_64_DTPOFF64:
+ 				relocValue = symAddr;
+ 				break;
++			// SPDX-SnippetBegin
++			// SPDX-License-Identifier: MIT
++			// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++			case R_X86_64_TPOFF32:
++			case R_X86_64_TPOFF64: {
++				unsigned dso = symbolImage != NULL
++					? symbolImage->dso_tls_id : image->dso_tls_id;
++				relocValue = r5_initial_exec_offset(dso, symAddr, rel[i].r_addend);
++				break;
++			}
++			// SPDX-SnippetEnd
+ 			default:
+ 				TRACE(("unhandled relocation type %d\n", type));
+ 				return B_BAD_DATA;
+ 		}
+ 
+-		if (type == R_X86_64_PC32 || type == R_X86_64_DTPOFF32)
++		if (type == R_X86_64_PC32 || type == R_X86_64_DTPOFF32
++			|| type == R_X86_64_TPOFF32)
+ 			*(Elf32_Addr *)relocAddr = relocValue;
+ 		else
+ 			*(Elf64_Addr *)relocAddr = relocValue;
+@@ -104,5 +127,15 @@
+ 			return status;
+ 	}
+ 
++	// SPDX-SnippetBegin
++	// SPDX-License-Identifier: MIT
++	// SPDX-SnippetCopyrightText: 2026 R5OS Contributors
++	// Only now may another thread copy this image's TLS (elf_tls.cpp,
++	// Materialize()): its segments are mapped and relocated.
++	if (image->dso_tls_id != unsigned(-1))
++		TLSBlockTemplates::Get().SetRelocated(image->dso_tls_id);
++	materialize_initial_exec_tls();
++	// SPDX-SnippetEnd
++
+ 	return B_OK;
+ }

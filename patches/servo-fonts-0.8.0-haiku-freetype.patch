@@ -1,6 +1,7 @@
+diff -ruN -x target -x '*.orig' a/Cargo.toml b/Cargo.toml
 --- a/Cargo.toml	2006-07-24 03:21:28.000000000 +0200
-+++ b/Cargo.toml	2026-11-25 23:03:29.443789326 +0100
-@@ -208,22 +208,22 @@
++++ b/Cargo.toml	2026-11-26 16:12:34.670764605 +0100
+@@ -208,19 +208,19 @@
  version = "6"
  package = "yeslogic-fontconfig-sys"
  
@@ -22,28 +23,309 @@
 +[target.'cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd", target_os = "haiku"))'.dependencies.servo-allocator]
  version = "=0.8.0"
  
--[target.'cfg(target_os = "android")'.dependencies.xml]
-+[target.'cfg(any(target_os = "android", target_os = "haiku"))'.dependencies.xml]
- version = "1.1"
- 
- [target.'cfg(target_os = "macos")'.dependencies.byteorder]
+ [target.'cfg(target_os = "android")'.dependencies.xml]
+diff -ruN -x target -x '*.orig' a/platform/freetype/haiku/font_list.rs b/platform/freetype/haiku/font_list.rs
+--- a/platform/freetype/haiku/font_list.rs	1970-01-01 01:00:00.000000000 +0100
++++ b/platform/freetype/haiku/font_list.rs	2026-11-26 16:13:11.228197556 +0100
+@@ -0,0 +1,279 @@
++// SPDX-License-Identifier: MIT
++// SPDX-FileCopyrightText: 2026 R5OS Contributors
++//
++// The font list on Haiku (R5): every font file in Haiku's font folders,
++// read with FreeType for its family, weight, width and style. Servo's other
++// platforms ask fontconfig or an Android XML file; Haiku has neither.
++
++use std::ffi::{CStr, CString};
++use std::path::{Path, PathBuf};
++use std::ptr;
++use std::sync::LazyLock;
++
++use freetype_sys::{
++    FT_Done_Face, FT_Face, FT_Get_Sfnt_Table, FT_Long, FT_New_Face, FT_SFNT_OS2,
++    FT_STYLE_FLAG_BOLD, FT_STYLE_FLAG_ITALIC, TT_OS2,
++};
++use log::warn;
++use servo_base::text::{UnicodeBlock, UnicodeBlockMethod, is_cjk};
++use style::Atom;
++use style::values::computed::font::GenericFontFamily;
++use style::values::computed::{
++    FontStyle as StyleFontStyle, FontWeight as StyleFontWeight, FontWidth as StyleFontWidth,
++};
++
++use crate::platform::freetype::library_handle::FreeTypeLibraryHandle;
++use crate::{
++    FallbackFontSelectionOptions, FontIdentifier, FontTemplate, FontTemplateDescriptor,
++    LocalFontIdentifier, LowercaseFontFamilyName,
++};
++
++static FONT_LIST: LazyLock<FontList> = LazyLock::new(FontList::new);
++
++struct Face {
++    path: String,
++    index: u16,
++    weight: f32,
++    width: f32,
++    italic: bool,
++}
++
++struct FontFamily {
++    name: String,
++    faces: Vec<Face>,
++}
++
++struct FontList {
++    families: Vec<FontFamily>,
++}
++
++// What each generic family means on R5: the fonts Haiku ships (the noto
++// package), with DejaVu and Liberation as the next choice when installed.
++const SANS: &[&str] = &["Noto Sans", "DejaVu Sans", "Liberation Sans"];
++const SERIF: &[&str] = &["Noto Serif", "DejaVu Serif", "Liberation Serif"];
++const MONO: &[&str] = &["Noto Sans Mono", "DejaVu Sans Mono", "Liberation Mono"];
++
++impl FontList {
++    fn new() -> FontList {
++        let mut list = FontList { families: Vec::new() };
++        for folder in font_folders() {
++            list.scan(&folder);
++        }
++        if list.families.is_empty() {
++            warn!("No fonts found in Haiku's font folders");
++        }
++        list
++    }
++
++    fn scan(&mut self, folder: &Path) {
++        let Ok(entries) = std::fs::read_dir(folder) else {
++            return;
++        };
++        for entry in entries.flatten() {
++            let path = entry.path();
++            if path.is_dir() {
++                self.scan(&path);
++                continue;
++            }
++            let lower = path.to_string_lossy().to_lowercase();
++            if ![".ttf", ".otf", ".ttc", ".otc"].iter().any(|ext| lower.ends_with(ext)) {
++                continue;
++            }
++            self.add_file(&path);
++        }
++    }
++
++    fn add_file(&mut self, path: &Path) {
++        let Ok(c_path) = CString::new(path.to_string_lossy().as_bytes()) else {
++            return;
++        };
++        let mut index: FT_Long = 0;
++        loop {
++            let mut face: FT_Face = ptr::null_mut();
++            // FT_New_Face and FT_Done_Face must hold the library lock
++            // (library_handle.rs).
++            let library = FreeTypeLibraryHandle::get().lock();
++            let result =
++                unsafe { FT_New_Face(library.freetype_library, c_path.as_ptr(), index, &mut face) };
++            if result != 0 || face.is_null() {
++                return;
++            }
++            let record = unsafe { &*face };
++            let faces_in_file = record.num_faces;
++            if !record.family_name.is_null() {
++                let family =
++                    unsafe { CStr::from_ptr(record.family_name) }.to_string_lossy().into_owned();
++                let italic = record.style_flags & FT_STYLE_FLAG_ITALIC != 0;
++                let bold = record.style_flags & FT_STYLE_FLAG_BOLD != 0;
++                // The OS/2 table has the real weight and width; the bold
++                // flag only says bold or not.
++                let os2 = unsafe { FT_Get_Sfnt_Table(face, FT_SFNT_OS2) } as *const TT_OS2;
++                let (weight, width) = if os2.is_null() {
++                    (if bold { 700.0 } else { 400.0 }, 100.0)
++                } else {
++                    let os2 = unsafe { &*os2 };
++                    let weight = match os2.usWeightClass {
++                        0 => if bold { 700.0 } else { 400.0 },
++                        w => w as f32,
++                    };
++                    // usWidthClass 1..9 is 50% .. 200%.
++                    let width = match os2.usWidthClass {
++                        1 => 50.0,
++                        2 => 62.5,
++                        3 => 75.0,
++                        4 => 87.5,
++                        6 => 112.5,
++                        7 => 125.0,
++                        8 => 150.0,
++                        9 => 200.0,
++                        _ => 100.0,
++                    };
++                    (weight, width)
++                };
++                self.add_face(
++                    family,
++                    Face {
++                        path: path.to_string_lossy().into_owned(),
++                        index: index as u16,
++                        weight,
++                        width,
++                        italic,
++                    },
++                );
++            }
++            unsafe { FT_Done_Face(face) };
++            drop(library);
++            index += 1;
++            if index >= faces_in_file {
++                return;
++            }
++        }
++    }
++
++    fn add_face(&mut self, family: String, face: Face) {
++        match self
++            .families
++            .iter_mut()
++            .find(|f| f.name.eq_ignore_ascii_case(&family))
++        {
++            Some(existing) => existing.faces.push(face),
++            None => self.families.push(FontFamily {
++                name: family,
++                faces: vec![face],
++            }),
++        }
++    }
++
++    fn find_family(&self, name: &str) -> Option<&FontFamily> {
++        if let Some(family) = self.families.iter().find(|f| f.name.eq_ignore_ascii_case(name)) {
++            return Some(family);
++        }
++        // A generic family name maps to the first installed choice.
++        let choices = match name.to_ascii_lowercase().as_str() {
++            "sans-serif" | "system-ui" => SANS,
++            "serif" | "cursive" | "fantasy" => SERIF,
++            "monospace" => MONO,
++            _ => return None,
++        };
++        choices.iter().find_map(|choice| {
++            self.families.iter().find(|f| f.name.eq_ignore_ascii_case(choice))
++        })
++    }
++}
++
++// Haiku's font folders: the system's, then the user's, each with its
++// non-packaged twin. The user's come from $HOME, not a fixed path, so every
++// account gets its own (R5 has more than one person).
++fn font_folders() -> Vec<PathBuf> {
++    let mut folders = vec![
++        PathBuf::from("/boot/system/data/fonts"),
++        PathBuf::from("/boot/system/non-packaged/data/fonts"),
++    ];
++    if let Some(home) = std::env::var_os("HOME") {
++        let home = PathBuf::from(home);
++        folders.push(home.join("config/data/fonts"));
++        folders.push(home.join("config/non-packaged/data/fonts"));
++    }
++    folders
++}
++
++// Functions used by SystemFontService
++pub(crate) fn for_each_available_family<F>(mut callback: F)
++where
++    F: FnMut(&str),
++{
++    for family in &FONT_LIST.families {
++        callback(&family.name);
++    }
++    for generic in ["sans-serif", "serif", "monospace", "cursive", "fantasy", "system-ui"] {
++        if FONT_LIST.find_family(generic).is_some() {
++            callback(generic);
++        }
++    }
++}
++
++pub(crate) fn for_each_variation<F>(family_name: &str, mut callback: F)
++where
++    F: FnMut(FontTemplate),
++{
++    let Some(family) = FONT_LIST.find_family(family_name) else {
++        return;
++    };
++    for face in &family.faces {
++        let local_font_identifier = LocalFontIdentifier {
++            path: Atom::from(face.path.as_str()),
++            face_index: face.index,
++            named_instance_index: 0,
++        };
++        let descriptor = FontTemplateDescriptor::new(
++            StyleFontWeight::from_float(face.weight),
++            StyleFontWidth::from_percentage(face.width / 100.0),
++            if face.italic {
++                StyleFontStyle::ITALIC
++            } else {
++                StyleFontStyle::NORMAL
++            },
++        );
++        callback(FontTemplate::new(
++            FontIdentifier::Local(local_font_identifier),
++            descriptor,
++            None,
++        ));
++    }
++}
++
++// The fonts R5 ships per script (the noto and noto_sans_cjk_jp packages),
++// then the general ones.
++pub fn fallback_font_families(options: FallbackFontSelectionOptions) -> Vec<&'static str> {
++    let mut families = vec![];
++    if let Some(block) = options.character.block() {
++        match block {
++            UnicodeBlock::Thai => families.push("Noto Sans Thai"),
++            _ => {
++                if is_cjk(options.character) {
++                    families.push("Noto Sans CJK JP");
++                }
++            },
++        }
++    }
++    families.push("Noto Sans");
++    families.push("Noto Sans Symbols");
++    families.push("Noto Sans Symbols 2");
++    families.push("Noto Sans CJK JP");
++    families.push("DejaVu Sans");
++    families
++}
++
++pub(crate) fn default_system_generic_font_family(
++    generic: GenericFontFamily,
++) -> LowercaseFontFamilyName {
++    match generic {
++        GenericFontFamily::None | GenericFontFamily::Serif => "serif",
++        GenericFontFamily::SansSerif => "sans-serif",
++        GenericFontFamily::Monospace => "monospace",
++        GenericFontFamily::Cursive => "cursive",
++        GenericFontFamily::Fantasy => "fantasy",
++        GenericFontFamily::SystemUi => "system-ui",
++    }
++    .into()
++}
+diff -ruN -x target -x '*.orig' a/platform/freetype/mod.rs b/platform/freetype/mod.rs
 --- a/platform/freetype/mod.rs	2006-07-24 03:21:28.000000000 +0200
-+++ b/platform/freetype/mod.rs	2026-11-25 22:43:58.695182000 +0100
-@@ -11,12 +11,12 @@
- ))]
- pub mod font_list;
- 
--#[cfg(target_os = "android")]
-+#[cfg(any(target_os = "android", target_os = "haiku"))]
- mod android {
-     pub mod font_list;
-     mod xml;
- }
--#[cfg(target_os = "android")]
-+#[cfg(any(target_os = "android", target_os = "haiku"))]
++++ b/platform/freetype/mod.rs	2026-11-26 16:12:30.515885329 +0100
+@@ -19,6 +19,14 @@
+ #[cfg(target_os = "android")]
  pub use self::android::font_list;
  
++// Haiku: Haiku's font folders, read with FreeType (R5).
++#[cfg(target_os = "haiku")]
++mod haiku {
++    pub mod font_list;
++}
++#[cfg(target_os = "haiku")]
++pub use self::haiku::font_list;
++
  #[cfg(any(target_env = "ohos", ohos_mock))]
+ mod ohos {
+     mod font_cache;
+diff -ruN -x target -x '*.orig' a/platform/mod.rs b/platform/mod.rs
 --- a/platform/mod.rs	2006-07-24 03:21:28.000000000 +0200
 +++ b/platform/mod.rs	2026-11-25 22:43:58.694701629 +0100
 @@ -21,14 +21,14 @@

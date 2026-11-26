@@ -72,9 +72,9 @@ dependencies = [
 
 [[package]]
 name = "allocator-api2"
-version = "0.2.21"
+version = "0.2.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
+checksum = "57b212daf2e827b1ccdd778b7eb48ba433e58cb0e4f27b43cd6b7a608425a014"
 dependencies = [
  "serde",
 ]
@@ -4134,6 +4134,7 @@ version = "0.1.0"
 dependencies = [
  "dpi",
  "freetype-sys",
+ "log",
  "raw-window-handle",
  "servo",
  "url",
@@ -5659,8 +5660,6 @@ dependencies = [
 [[package]]
 name = "servo-net"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e274e25650db0dacd2a290d13f51effd12735c17d5448403c2c77fea530e034d"
 dependencies = [
  "async-compression",
  "async-recursion",

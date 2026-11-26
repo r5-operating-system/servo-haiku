@@ -3,6 +3,8 @@
 
 # Building libr5servo
 
+> These are R5's own notes, copied from `distro/servo/BUILD.md` in the R5 repository as of merge `0c0f50181c`. Paths such as `distro/servo/` and `/home/nickr/r5os/` name R5's tree and R5's build machine; in this repository `distro/servo/` is the top directory. To build outside R5, read [BUILDING.md](BUILDING.md).
+
 This is the instruction for the next agent. Do not ask where the trees are. Do not invent a second build.
 
 `scripts/build-r5servo.sh` is the only recipe. It does not write the shared Haiku tree, it does not run jam, and it does not install the library into an image. Job cap: `-j4`.
@@ -101,15 +103,20 @@ Each file in `distro/servo/patches/` applies with `patch -p1` on the unpacked cr
 
 `HOST_CC` stays the Linux gcc; the cross compiler is not the host compiler.
 
-The shared library is Haiku g++ around the Rust staticlib, with `--whole-archive` and `--allow-multiple-definition` (two copies of lz4). A cdylib hid the C++ symbols. NEEDED libraries: `libstdc++`, `libbe`, `libz`, `libbsd`, `libgcc_s`, `libroot`, `libnetwork`. Mesa `libGL` is opened at runtime.
+The shared library is Haiku g++ around the Rust staticlib, with `--whole-archive` and `--allow-multiple-definition` (two copies of lz4). A cdylib hid the C++ symbols. NEEDED libraries: `libstdc++`, `libbe`, `libtracker` (BFilePanel for a page's file upload), `libz`, `libbsd`, `libgcc_s`, `libroot`, `libnetwork`. Mesa `libGL` is opened at runtime.
 
 The first document has to be the web view's initial URL. Creating the engine on `about:blank` and then calling `load()` drops the real document. `LoadURL` from the application thread locks the window before it reads the size.
 
-Destroying the GL context aborts in `eglDestroyImageKHR`. The engine is leaked on purpose.
+Destroying the GL context aborts in `eglDestroyImageKHR`. Since 0.8.0-3, `r5_servo_destroy()` frees the engine and its frame and puts the context in a pool; the next tab reuses it, so closing tabs no longer leaks. Since 0.8.0-4 the tabs of one window share one context (`r5_servo_create_sharing()`): Servo keeps one painter, with its own WebRender, worker threads and compiled shaders, per rendering context, so a tab with a context of its own compiled every shader again (minutes on Lavapipe). Only one tab per window is visible (`r5_servo_set_visible()`), and a hidden tab is not read back. A context goes back to the pool when the last tab that uses it is destroyed. A new window still starts its own painter. Since 0.8.0-5 no user name or password leaves the library in an address, a history entry, an event or a log line (`shown_url()`, `shown_text()`); a select list, file chooser or context menu the page closed itself no longer takes a late answer (`hide_embedder_control`); a crashed page stops the tab's progress and logs the reason (`notify_crashed`, Servo shows its own crash page). With `R5_SERVO_DEBUG` set the library logs engines, visibility and the first frames (tests only). The build runs `cargo --locked` with the `Cargo.lock` in git.
+
+Since 0.8.0-3 Servo is driven by its own wake-ups: `r5_servo_set_waker()` before the first `r5_servo_create()`, then `r5_servo_pump()` and `r5_servo_paint()` on the window thread when woken. Servo allows one instance per process (`servo_config`'s options are a `OnceLock`), and its objects must stay on the thread that built them, so all Servo calls of a process run on one thread (Aomi's `ServoEngine` looper) and every normal window shares that Servo; a private window is its own process. Mouse, wheel and keys go in through `r5_servo_mouse_move()`, `r5_servo_mouse_buttons()`, `r5_servo_wheel()` and `r5_servo_key()`. A normal window passes `AOMI_PROFILE_DIR` (Servo keeps cookies, HSTS and logins there); a private window passes none, so Servo keeps them in memory only.
 
 ## Where it lands
 
-`distro/servo/pack-r5servo.py` packs the stripped `libr5servo.so` and `BServoView.h` into `distro/packages/x86_64/r5servo-0.8.0-1-x86_64.hpkg` (~49 MiB). `scripts/pin-mesa-packages.sh` includes it in `r5-opengl.repo` and pins `r5servo-0.8.0-1`, and `distro/UserBuildConfig` adds `r5servo` to `AddHaikuImageSystemPackages`, so jam installs it into the image without running cargo.
+`distro/servo/pack-r5servo.py` packs the stripped `libr5servo.so`, `BServoView.h` and `documentation/packages/r5servo/THIRD_PARTY_NOTICES.txt` (every licence, copyright and NOTICE file of the crates and bundled C/C++ code, from `distro/servo/collect-servo-notices.py`) into `r5servo-<version>-x86_64.hpkg` (~49 MiB) in `$SERVO_SRC/r5servo-out`, and prints its sha256. The package is not stored in git. It is a GitHub Release asset of this repository (tag `r5servo-<version>`); `distro/servo/r5servo.sha256` pins the version, the address and the sha256. `scripts/pin-mesa-packages.sh` takes the local build output when its hash matches, otherwise downloads the asset, and stops the build on a wrong hash. It includes the package in `r5-opengl.repo` and pins it, and `distro/UserBuildConfig` adds `r5servo` to `AddHaikuImageSystemPackages`, so jam installs it without running cargo.
+
+A new version: bump `VERSION` in `pack-r5servo.py`, build, pack, put the new hash in `r5servo.sha256`, and upload the package as the asset of a new Release `r5servo-<version>` (that upload needs the owner's go).
+
 
 - Header: `/boot/system/develop/headers/r5/BServoView.h`
 - Library: `/boot/system/lib/libr5servo.so` (soname `libr5servo.so`, symlinked at `/boot/system/develop/lib/libr5servo.so`)

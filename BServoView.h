@@ -2,17 +2,18 @@
  * SPDX-FileCopyrightText: 2026 R5OS Contributors
  * SPDX-License-Identifier: MIT
  *
- * Servo's page view. The calls and the message codes match
- * docs/design/AOMI-UI.md, "The engine view", and the numbers in
- * distro/apps/aomi/WebContentView.h. Round 1 changes the base class
- * from BView to BWebContentView and deletes the copied contract below.
- * What Servo 0.8.0 cannot do returns B_NOT_SUPPORTED.
+ * Servo's page view for any program: link libr5servo.so. The calls and the
+ * message codes match the numbers in distro/apps/aomi/WebContentView.h.
+ * What Servo 0.8.0 cannot do returns B_NOT_SUPPORTED. R5Book: servo-view.html.
  *
- * Not installed in the image lists this round. The recipe copies:
+ * The r5servo package installs:
  *   header  -> /boot/system/develop/headers/r5/BServoView.h
  *   library -> /boot/system/lib/libr5servo.so
- * r5-servo-test links libr5servo.so. A private boot uses
- * /boot/system/non-packaged/lib until an image build installs it.
+ *
+ * Servo runs one engine per process, on the thread that first creates a
+ * view: keep every BServoView of a program in one window. The view takes
+ * mouse, wheel and keys, and draws the page at its own size.
+
  */
 #ifndef R5_BSERVO_VIEW_H
 #define R5_BSERVO_VIEW_H
@@ -115,9 +116,18 @@ public:
 	virtual	void				AttachedToWindow();
 	virtual	void				DetachedFromWindow();
 	virtual	void				Draw(BRect updateRect);
+	virtual	void				MouseDown(BPoint where);
+	virtual	void				MouseUp(BPoint where);
+	virtual	void				MouseMoved(BPoint where, uint32 transit,
+									const BMessage* dragMessage);
+	virtual	void				KeyDown(const char* bytes, int32 numBytes);
+	virtual	void				KeyUp(const char* bytes, int32 numBytes);
+
 	virtual	void				FrameResized(float width, float height);
 	virtual	void				MessageReceived(BMessage* message);
 	virtual	void				MakeFocus(bool focused = true);
+	virtual	void				Show();
+	virtual	void				Hide();
 
 private:
 			status_t			_Start(const char* document, bool documentIsHTML);
