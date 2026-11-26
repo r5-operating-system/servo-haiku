@@ -24,7 +24,7 @@
 | `HAIKU` | A Haiku build tree. Enough instead of `HAIKU_CROSS_TOOLS` and `HAIKU_PACKAGE`. | |
 | `HAIKU_PACKAGE` | Haiku's host `package` tool, for `pack-r5servo.py`. | from `HAIKU` |
 | `LIBCLANG_PATH` | Directory with `libclang.so`. Its `../bin` goes on `PATH`. | `$WORK/llvm/lib` |
-| `WORK` | Build directory: the patched crates, cargo's `target/` (about 16 GB), `r5servo-out/`, the log. | `build/` in this repository |
+| `WORK` | Build directory: the patched crates, cargo's `target/` (10 GB and more), `r5servo-out/`, the log. | `build/` in this repository |
 | `RUST_TOOLCHAIN` | rustup toolchain name. | `1.99.1` |
 | `RUSTUP_HOME`, `CARGO_HOME` | rustup and cargo homes. The crates are downloaded into `CARGO_HOME`. | `$WORK/rust/rustup` and `$WORK/rust/cargo` if they exist, else `~/.rustup` and `~/.cargo` |
 | `JOBS` | Parallel jobs for cargo. | `4` |
@@ -76,7 +76,11 @@ It prints the size and sha256.
 
 ## Same library as R5
 
-R5 builds its `r5servo` package with this script, `WORK` set to its build directory. The library depends on the paths of `WORK` and `CARGO_HOME` (Rust keeps source paths in panic messages), so a build in another directory gives the same code with different path strings, and another sha256.
+R5 builds its `r5servo` package with this script, `WORK` set to its build directory; that build is byte-equal to the library in the release. The library depends on the paths of `WORK` and `CARGO_HOME`: Rust keeps source paths in panic messages and derives crate hashes, and so symbol names and code layout, from the paths of the patched crates. A build in another directory is the same source with a different layout and another sha256.
+
+## Measured
+
+26 Nov 2026, on R5's build machine (WSL, 12 threads, 15 GB), `JOBS=4`, from an empty `WORK` and `CARGO_HOME`: `cargo fetch` 10 s, `cargo build` 1326 s (22 minutes, SpiderMonkey included), link of `libr5servo.so` 14 s. `WORK` was 9.8 GB afterwards, `CARGO_HOME` 0.8 GB. An incremental build after a change in `engine/src/lib.rs` or `BServoView.cpp` takes under a minute.
 
 ## Using it on Haiku
 
