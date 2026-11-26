@@ -42,7 +42,7 @@ Experimental. Tested on R5 in QEMU on x86_64 (Zink on Lavapipe): pages load, HTT
 
 ## Licences
 
-- R5's own code here (`BServoView`, `r5_servo_abi.h`, `engine/src`, the scripts) is **MIT** (`LICENSES/MIT.txt`).
+- R5's own code here (`BServoView`, `r5_servo_abi.h`, `engine/src`, the scripts) is **MIT** (`LICENSE`, the same text as `LICENSES/MIT.txt`).
 - Each file in `patches/` changes a third-party project and is under that project's licence: Servo and `mozjs_sys` are MPL-2.0 (`LICENSES/MPL-2.0.txt`); surfman, ipc-channel and gaol are MIT/Apache-2.0 (surfman also offers MPL-2.0).
 - `haiku-patches/` changes Haiku's MIT code; the R5 parts are MIT and marked with SPDX snippet tags.
 - A built `libr5servo.so` contains Servo, SpiderMonkey and about 640 crates under MPL-2.0 and permissive licences, no GPL or LGPL. The package lists each with its licence and copyright files; the texts are in `LICENSES/`.
