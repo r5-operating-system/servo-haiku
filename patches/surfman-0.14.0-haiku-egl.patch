@@ -1,0 +1,183 @@
+--- a/build.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/build.rs	2026-11-25 22:18:47.357419815 +0100
+@@ -12,12 +12,14 @@
+         // Platforms
+         android_platform: { target_os = "android" },
+         ohos_platform: { target_env = "ohos" },
++        // R5 proof: Haiku is Unix, but it has no Wayland or X11 display.
++        haiku_platform: { target_os = "haiku" },
+         web_platform: { all(target_family = "wasm", target_os = "unknown") },
+         macos_platform: { target_os = "macos" },
+         ios_platform: { target_os = "ios" },
+         windows_platform: { target_os = "windows" },
+         apple: { any(target_os = "ios", target_os = "macos") },
+-        free_unix: { all(unix, not(apple), not(android_platform), not(target_os = "emscripten"), not(ohos_platform)) },
++        free_unix: { all(unix, not(apple), not(android_platform), not(target_os = "emscripten"), not(ohos_platform), not(haiku_platform)) },
+ 
+         // Native displays.
+         x11_platform: { all(free_unix, feature = "sm-x11") },
+--- a/src/base/mod.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/src/base/mod.rs	2026-11-25 22:40:04.617954055 +0100
+@@ -1,6 +1,6 @@
+ //! Shared support code that can be used by multiple Surfman backends.
+ 
+-#[cfg(any(android_platform, angle, free_unix, ohos_platform))]
++#[cfg(any(android_platform, angle, free_unix, ohos_platform, haiku_platform))]
+ pub(crate) mod egl;
+ 
+ #[cfg(macos_platform)]
+--- a/src/lib.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/src/lib.rs	2026-11-26 10:31:49.428140386 +0100
+@@ -29,7 +29,7 @@
+ pub mod hardware_buffer;
+ mod info;
+ pub mod macros;
+-#[cfg(free_unix)]
++#[cfg(any(free_unix, haiku_platform))]
+ pub mod mesa_surfaceless;
+ pub mod multi;
+ mod renderbuffers;
+@@ -49,6 +49,8 @@
+ pub use cgl as default;
+ #[cfg(any(android_platform, ohos_platform))]
+ pub use hardware_buffer as default;
++#[cfg(haiku_platform)]
++pub use mesa_surfaceless as default;
+ #[cfg(all(x11_platform, not(wayland_default)))]
+ pub use unix as default;
+ #[cfg(wayland_default)]
+--- a/src/mesa_surfaceless/connection.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/src/mesa_surfaceless/connection.rs	2026-11-26 10:31:49.474077488 +0100
+@@ -98,7 +98,8 @@
+     /// On the OSMesa backend, this returns a software adapter.
+     #[inline]
+     pub fn create_hardware_adapter(&self) -> Result<Adapter, Error> {
+-        Ok(Adapter::hardware())
++        // One display. DRI_PRIME=1 asks for a second GPU that QEMU does not have.
++        Ok(Adapter::low_power())
+     }
+ 
+     /// Returns the "best" adapter on this system, preferring low-power hardware adapters.
+@@ -132,27 +133,27 @@
+         Device::new(self, &self.create_adapter()?)
+     }
+ 
+-    /// Opens the display connection corresponding to the given `DisplayHandle`.
++    /// Opens a surfaceless Mesa display. The handle is not a Mesa display.
+     pub fn from_display_handle(_: raw_window_handle::DisplayHandle) -> Result<Connection, Error> {
+-        Err(Error::IncompatibleNativeWidget)
++        Connection::new()
+     }
+ 
+     /// Create a native widget from a raw pointer
+     pub unsafe fn create_native_widget_from_ptr(
+         &self,
+         _raw: *mut c_void,
+-        _size: Size2D<i32>,
++        size: Size2D<i32>,
+     ) -> NativeWidget {
+-        NativeWidget
++        NativeWidget { size }
+     }
+ 
+-    /// Create a native widget type from the given `WindowHandle`.
++    /// Record the size. The window pointer is not used: the surface is a pbuffer.
+     #[inline]
+     pub fn create_native_widget_from_window_handle(
+         &self,
+         _: raw_window_handle::WindowHandle,
+-        _size: Size2D<i32>,
++        size: Size2D<i32>,
+     ) -> Result<NativeWidget, Error> {
+-        Err(Error::IncompatibleNativeWidget)
++        Ok(NativeWidget { size })
+     }
+ }
+--- a/src/mesa_surfaceless/device.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/src/mesa_surfaceless/device.rs	2026-11-26 10:31:49.475473637 +0100
+@@ -10,7 +10,7 @@
+ use crate::gl;
+ use crate::mesa_surfaceless::context::{Context, ContextDescriptor, NativeContext};
+ use crate::mesa_surfaceless::surface::{NativeWidget, Surface, SurfaceTexture};
+-use crate::{ContextAttributes, Gl, SurfaceInfo};
++use crate::{ContextAttributeFlags, ContextAttributes, Gl, SurfaceInfo};
+ use crate::{Error, GLApi, SurfaceAccess, SurfaceType};
+ use euclid::default::Size2D;
+ use glow::Texture;
+@@ -56,7 +56,9 @@
+     pub(crate) fn set_environment_variables(&self) {
+         match *self {
+             Adapter::Hardware | Adapter::HardwarePrime => {
+-                env::remove_var(MESA_SOFTWARE_RENDERING_ENV_VAR);
++                // Leave LIBGL_ALWAYS_SOFTWARE alone. The proof sets it
++                // together with GALLIUM_DRIVER=zink so Mesa uses Zink on
++                // Lavapipe. Clearing it forces llvmpipe.
+             }
+             Adapter::Software => {
+                 env::set_var(MESA_SOFTWARE_RENDERING_ENV_VAR, "1");
+@@ -143,17 +145,22 @@
+         // Set environment variables as appropriate.
+         self.adapter.set_environment_variables();
+ 
++        // The only EGL config on this display has no 24-bit depth or 8-bit
++        // stencil. Asking for those returns no config. Depth for the page is
++        // a GL renderbuffer, added when the surface is created.
++        let mut attributes = *attributes;
++        attributes.flags.remove(ContextAttributeFlags::DEPTH);
++        attributes.flags.remove(ContextAttributeFlags::STENCIL);
++
+         unsafe {
+             ContextDescriptor::new(
+                 self.native_connection.egl_display,
+-                attributes,
++                &attributes,
+                 &[
+-                    egl::SURFACE_TYPE as EGLint,
+-                    egl::PBUFFER_BIT as EGLint,
++                    // OpenGL on the one config this display advertises. The page
++                    // is a GL texture, not a native window.
+                     egl::RENDERABLE_TYPE as EGLint,
+                     egl::OPENGL_BIT as EGLint,
+-                    egl::COLOR_BUFFER_TYPE as EGLint,
+-                    egl::RGB_BUFFER as EGLint,
+                 ],
+             )
+         }
+@@ -369,7 +376,10 @@
+     ) -> Result<Surface, Error> {
+         match surface_type {
+             SurfaceType::Generic { size } => self.create_generic_surface(context, &size),
+-            SurfaceType::Widget { .. } => Err(Error::UnsupportedOnThisPlatform),
++            // No native window on this backend. The widget's size becomes a pbuffer.
++            SurfaceType::Widget { native_widget } => {
++                self.create_generic_surface(context, &native_widget.size)
++            }
+         }
+     }
+ 
+--- a/src/mesa_surfaceless/surface.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/src/mesa_surfaceless/surface.rs	2026-11-25 23:21:32.442140192 +0100
+@@ -4,6 +4,8 @@
+ 
+ use crate::base::egl::surface::{EGLBackedSurface, EGLSurfaceTexture};
+ 
++use euclid::default::Size2D;
++
+ use std::marker::PhantomData;
+ 
+ /// Represents a hardware buffer of pixels that can be rendered to via the CPU or GPU and either
+@@ -37,9 +39,12 @@
+ #[derive(Debug)]
+ pub struct SurfaceTexture(pub(crate) EGLSurfaceTexture);
+ 
+-/// A placeholder wrapper for a native widget.
++/// The size of an off-screen surface. Mesa surfaceless has no native window,
++/// so the widget pointer is not stored.
+ #[derive(Clone)]
+-pub struct NativeWidget;
++pub struct NativeWidget {
++    pub size: Size2D<i32>,
++}
+ 
+ unsafe impl Send for Surface {}
+ 

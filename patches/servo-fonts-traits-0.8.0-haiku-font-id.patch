@@ -1,0 +1,11 @@
+--- a/font_identifier.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/font_identifier.rs	2026-11-25 22:43:58.695428782 +0100
+@@ -24,7 +24,7 @@
+     }
+ }
+ 
+-#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
++#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd", target_os = "haiku"))]
+ mod platform {
+     use std::fs::File;
+     use std::path::{Path, PathBuf};

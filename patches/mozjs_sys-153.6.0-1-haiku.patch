@@ -1,0 +1,194 @@
+--- a/build.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/build.rs	2026-11-25 20:18:37.266217142 +0100
+@@ -395,6 +395,22 @@
+         builder.clang_args(["-x", "c++"])
+     };
+ 
++    // The host libclang does not search the Haiku cross g++ include
++    // path. Its own gcc lookup finds the Linux libstdc++ and then
++    // cannot see features.h. R5_BINDGEN_CLANG_ARGS_FILE is one clang
++    // argument per line: -nostdinc, the Haiku target, and that g++
++    // search path as -isystem.
++    if let Ok(path) = env::var("R5_BINDGEN_CLANG_ARGS_FILE") {
++        let text = fs::read_to_string(&path).unwrap_or_else(|err| {
++            panic!("failed to read {path}: {err}");
++        });
++        for arg in text.lines() {
++            if !arg.is_empty() {
++                builder = builder.clang_arg(arg);
++            }
++        }
++    }
++
+     let compiler = cc_rs_builder.get_compiler();
+ 
+     // Setting CLANG_PATH to the absolute path (when using the default c++ compiler on macos),
+--- a/mozjs/build/moz.configure/flags.configure	2006-07-24 03:21:28.000000000 +0200
++++ b/mozjs/build/moz.configure/flags.configure	2026-11-25 18:50:47.838357561 +0100
+@@ -540,6 +540,8 @@
+ @depends(building_with_gnu_compatible_cc, target)
+ def moz_program_ldflags(building_with_gnu_compatible_cc, target):
+     if building_with_gnu_compatible_cc and target.kernel not in ("Darwin", "WASI"):
++        if target.kernel == "Haiku":
++            return ["-fPIC"]
+         return ["-pie"]
+ 
+ 
+--- a/mozjs/build/moz.configure/init.configure	2006-07-24 03:21:28.000000000 +0200
++++ b/mozjs/build/moz.configure/init.configure	2026-11-25 18:50:47.837635230 +0100
+@@ -521,6 +521,8 @@
+         canonical_os = canonical_kernel = "DragonFly"
+     elif os.startswith("freebsd"):
+         canonical_os = canonical_kernel = "FreeBSD"
++    elif os.startswith("haiku"):
++        canonical_os = canonical_kernel = "Haiku"
+     elif os.startswith("netbsd"):
+         canonical_os = canonical_kernel = "NetBSD"
+     elif os.startswith("openbsd"):
+@@ -964,6 +966,15 @@
+ 
+ 
+ @depends(target)
++def target_is_haiku(target):
++    if target.kernel == "Haiku":
++        return True
++
++
++set_define("XP_HAIKU", target_is_haiku)
++
++
++@depends(target)
+ def target_is_solaris(target):
+     if target.kernel == "SunOS":
+         return True
+--- a/mozjs/js/src/threading/moz.build	2006-07-24 03:21:28.000000000 +0200
++++ b/mozjs/js/src/threading/moz.build	2026-11-25 18:50:47.838679872 +0100
+@@ -32,6 +32,11 @@
+         "noop/NoopThread.cpp",
+     ]
+ else:
++    if CONFIG["OS_ARCH"] == "Haiku":
++        DEFINES["_GNU_SOURCE"] = True
++        OS_LIBS += [
++            "gnu",
++        ]
+     UNIFIED_SOURCES += [
+         "posix/CpuCount.cpp",
+         "posix/PosixThread.cpp",
+--- a/mozjs/js/src/util/NativeStack.cpp	2006-07-24 03:21:28.000000000 +0200
++++ b/mozjs/js/src/util/NativeStack.cpp	2026-11-25 18:53:05.607079279 +0100
+@@ -12,6 +12,9 @@
+ // Nothing
+ #elif defined(XP_DARWIN) || defined(DARWIN) || defined(XP_UNIX)
+ #  include <pthread.h>
++#  if defined(XP_HAIKU)
++#    include <OS.h>
++#  endif
+ #  if defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__DragonFly__)
+ #    include <pthread_np.h>
+ #  endif
+@@ -125,6 +128,14 @@
+   return NativeStackBase;
+ }
+ 
++#elif defined(XP_HAIKU)
++
++void* js::GetNativeStackBaseImpl() {
++  thread_info info;
++  get_thread_info(find_thread(NULL), &info);
++  return info.stack_end;
++}
++
+ #else  // __wasi__
+ 
+ void* js::GetNativeStackBaseImpl() {
+--- a/mozjs/js/src/wasm/WasmSignalHandlers.cpp	2006-07-24 03:21:28.000000000 +0200
++++ b/mozjs/js/src/wasm/WasmSignalHandlers.cpp	2026-11-25 18:53:05.606687786 +0100
+@@ -236,6 +236,17 @@
+ #      define R01_sig(p) ((p)->uc_mcontext.mc_gpr[1])
+ #      define R32_sig(p) ((p)->uc_mcontext.mc_srr0)
+ #    endif
++#  elif defined(XP_HAIKU)
++#    define EIP_sig(p) ((p)->uc_mcontext.eip)
++#    define EBP_sig(p) ((p)->uc_mcontext.ebp)
++#    define ESP_sig(p) ((p)->uc_mcontext.esp)
++#    define RIP_sig(p) ((p)->uc_mcontext.rip)
++#    define RSP_sig(p) ((p)->uc_mcontext.rsp)
++#    define RBP_sig(p) ((p)->uc_mcontext.rbp)
++#    define R11_sig(p) ((p)->uc_mcontext.r11)
++#    define R13_sig(p) ((p)->uc_mcontext.r13)
++#    define R14_sig(p) ((p)->uc_mcontext.r14)
++#    define R15_sig(p) ((p)->uc_mcontext.r15)
+ #  elif defined(XP_DARWIN)
+ #    define EIP_sig(p) ((p)->thread.uts.ts32.__eip)
+ #    define EBP_sig(p) ((p)->thread.uts.ts32.__ebp)
+--- a/mozjs/mfbt/Assertions.h	2006-07-24 03:21:28.000000000 +0200
++++ b/mozjs/mfbt/Assertions.h	2026-11-25 18:50:47.839049584 +0100
+@@ -257,7 +257,7 @@
+       MOZ_NoReturn(line);         \
+     } while (false)
+ 
+-#elif __wasi__
++#elif __wasi__ || defined(__HAIKU__)
+ 
+ #  define MOZ_REALLY_CRASH(line) __builtin_trap()
+ 
+--- a/mozjs/mozglue/misc/TimeStamp_posix.cpp	2006-07-24 03:21:28.000000000 +0200
++++ b/mozjs/mozglue/misc/TimeStamp_posix.cpp	2026-11-25 19:58:32.011269235 +0100
+@@ -11,7 +11,9 @@
+ // obtained with this API; see TimeDuration::Resolution;
+ //
+ 
+-#include <sys/syscall.h>
++#ifndef __HAIKU__
++#  include <sys/syscall.h>
++#endif
+ #include <time.h>
+ #include <unistd.h>
+ #include <string.h>
+--- a/mozjs/python/mozbuild/mozbuild/configure/constants.py	2006-07-24 03:21:28.000000000 +0200
++++ b/mozjs/python/mozbuild/mozbuild/configure/constants.py	2026-11-25 18:50:47.834023325 +0100
+@@ -36,6 +36,7 @@
+         "DragonFly",
+         "FreeBSD",
+         "GNU",
++        "Haiku",
+         "iOS",
+         "NetBSD",
+         "OpenBSD",
+@@ -51,6 +52,7 @@
+         "Darwin",
+         "DragonFly",
+         "FreeBSD",
++        "Haiku",
+         "kFreeBSD",
+         "Linux",
+         "NetBSD",
+@@ -140,6 +142,7 @@
+     "Darwin": "__APPLE__",
+     "DragonFly": "__DragonFly__",
+     "FreeBSD": "__FreeBSD__",
++    "Haiku": "__HAIKU__",
+     "kFreeBSD": "__FreeBSD_kernel__",
+     "Linux": "__linux__",
+     "NetBSD": "__NetBSD__",
+--- a/src/jsglue.cpp	2006-07-24 03:21:28.000000000 +0200
++++ b/src/jsglue.cpp	2026-11-25 20:33:23.486344905 +0100
+@@ -1003,6 +1003,8 @@
+ // nothing needed here
+ #elif defined(_MSC_VER)
+ // nothing needed here
++#elif defined(__HAIKU__)
++#  include <malloc.h>
+ #else
+ #  error "unsupported platform"
+ #endif
+@@ -1023,6 +1025,8 @@
+   return _msize((void*)aPtr);
+ #elif defined(_MSC_VER)
+   return _msize((void*)aPtr);
++#elif defined(__HAIKU__)
++  return malloc_usable_size((void*)aPtr);
+ #else
+ #  error "unsupported platform"
+ #endif

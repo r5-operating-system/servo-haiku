@@ -1,0 +1,65 @@
+--- a/Cargo.toml	2006-07-24 03:21:28.000000000 +0200
++++ b/Cargo.toml	2026-11-25 23:03:29.443789326 +0100
+@@ -208,22 +208,22 @@
+ version = "6"
+ package = "yeslogic-fontconfig-sys"
+ 
+-[target.'cfg(any(target_os = "android",target_env = "ohos"))'.dependencies.freetype-sys]
++[target.'cfg(any(target_os = "android",target_env = "ohos",target_os = "haiku"))'.dependencies.freetype-sys]
+ version = "0.23"
+ features = ["bundled"]
+ 
+ [target.'cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))'.dependencies.freetype-sys]
+ version = "0.23"
+ 
+-[target.'cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))'.dependencies.harfbuzz-sys]
++[target.'cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd", target_os = "haiku"))'.dependencies.harfbuzz-sys]
+ version = "0.8"
+ features = ["freetype"]
+ default-features = false
+ 
+-[target.'cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))'.dependencies.servo-allocator]
++[target.'cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd", target_os = "haiku"))'.dependencies.servo-allocator]
+ version = "=0.8.0"
+ 
+-[target.'cfg(target_os = "android")'.dependencies.xml]
++[target.'cfg(any(target_os = "android", target_os = "haiku"))'.dependencies.xml]
+ version = "1.1"
+ 
+ [target.'cfg(target_os = "macos")'.dependencies.byteorder]
+--- a/platform/freetype/mod.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/platform/freetype/mod.rs	2026-11-25 22:43:58.695182000 +0100
+@@ -11,12 +11,12 @@
+ ))]
+ pub mod font_list;
+ 
+-#[cfg(target_os = "android")]
++#[cfg(any(target_os = "android", target_os = "haiku"))]
+ mod android {
+     pub mod font_list;
+     mod xml;
+ }
+-#[cfg(target_os = "android")]
++#[cfg(any(target_os = "android", target_os = "haiku"))]
+ pub use self::android::font_list;
+ 
+ #[cfg(any(target_env = "ohos", ohos_mock))]
+--- a/platform/mod.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/platform/mod.rs	2026-11-25 22:43:58.694701629 +0100
+@@ -21,14 +21,14 @@
+     not(target_env = "ohos")
+ ))]
+ use crate::FallbackFontSelectionOptions;
+-#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
++#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd", target_os = "haiku"))]
+ pub use crate::platform::freetype::{font, font_list};
+ #[cfg(target_os = "macos")]
+ pub use crate::platform::macos::{core_text_font_cache, font, font_list};
+ #[cfg(target_os = "windows")]
+ pub use crate::platform::windows::{font, font_list};
+ 
+-#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
++#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd", target_os = "haiku"))]
+ pub mod freetype;
+ 
+ #[cfg(target_os = "macos")]

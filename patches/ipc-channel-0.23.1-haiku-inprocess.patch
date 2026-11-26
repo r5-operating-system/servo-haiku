@@ -1,0 +1,28 @@
+--- a/src/platform/mod.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/src/platform/mod.rs	2026-11-26 10:31:49.518031072 +0100
+@@ -46,12 +46,14 @@
+     pub use super::windows::*;
+ }
+ 
++// Haiku has no memfd. The in-process backend is the one Android uses.
+ #[cfg(any(
+     feature = "force-inprocess",
+     target_os = "android",
+     target_os = "ios",
+     target_os = "wasi",
+-    target_os = "unknown"
++    target_os = "unknown",
++    target_os = "haiku"
+ ))]
+ mod inprocess;
+ #[cfg(any(
+@@ -59,7 +61,8 @@
+     target_os = "android",
+     target_os = "ios",
+     target_os = "wasi",
+-    target_os = "unknown"
++    target_os = "unknown",
++    target_os = "haiku"
+ ))]
+ mod os {
+     pub use super::inprocess::*;

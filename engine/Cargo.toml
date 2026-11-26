@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: MPL-2.0
+# The engine links Servo, which is MPL-2.0. This wrapper is MIT;
+# see the SPDX header in src/lib.rs. The shared library as a whole
+# follows both: MIT for the R5 files, MPL-2.0 for the Servo files.
+
+[package]
+name = "r5servo"
+version = "0.1.0"
+edition = "2021"
+license = "MIT AND MPL-2.0"
+publish = false
+
+[lib]
+name = "r5servo"
+crate-type = ["staticlib"]
+
+[dependencies]
+servo = { version = "=0.8.0", default-features = false, features = ["js_jit", "bundled"] }
+dpi = "0.1"
+raw-window-handle = "0.6"
+url = "2"
+# Haiku is not in servo-fonts' Linux target list. The bundled copy is the
+# one the Android target already uses, so the build does not ask pkg-config.
+freetype-sys = { version = "=0.23.0", features = ["bundled"] }
+
+[patch.crates-io]
+mozjs_sys = { path = ".vendor/mozjs-sys" }
+surfman = { path = ".vendor/surfman" }
+ipc-channel = { path = ".vendor/ipc-channel" }
+servo-fonts = { path = ".vendor/servo-fonts" }
+servo-fonts-traits = { path = ".vendor/servo-fonts-traits" }
+gaol = { path = ".vendor/gaol" }
+servo-script = { path = ".vendor/servo-script" }

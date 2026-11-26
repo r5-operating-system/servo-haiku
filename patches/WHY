@@ -1,0 +1,7 @@
+mozjs_sys-153.6.0-1-haiku.patch: SpiderMonkey's configure does not know Haiku, a few POSIX files need it, and bindgen's host libclang must be pointed at the Haiku C++ headers.
+surfman-0.14.0-haiku-egl.patch: Haiku EGL is Mesa surfaceless, one 8/8/8/8 config with no depth or stencil, and no native window.
+ipc-channel-0.23.1-haiku-inprocess.patch: Haiku has no memfd, so the channel is the in-process backend Android uses.
+gaol-0.2.1-haiku-no-sandbox.patch: Haiku has no sandbox, so a profile cannot be built and the child is not jailed.
+servo-fonts-0.8.0-haiku-freetype.patch: Haiku is not in the Linux font list, so it uses the bundled FreeType path Android already uses.
+servo-fonts-traits-0.8.0-haiku-font-id.patch: The font-file identifier is the Unix path code, and Haiku was not in that cfg.
+servo-script-0.8.0-haiku-platform.patch: navigator.platform has no Haiku string, so the script crate did not build for that target.

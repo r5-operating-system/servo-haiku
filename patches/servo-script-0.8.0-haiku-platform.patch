@@ -1,0 +1,15 @@
+--- a/dom/navigator/navigatorinfo.rs	2006-07-24 03:21:28.000000000 +0200
++++ b/dom/navigator/navigatorinfo.rs	2026-11-25 23:12:48.393926723 +0100
+@@ -52,6 +52,12 @@
+ }
+ 
+ #[expect(non_snake_case)]
++#[cfg(target_os = "haiku")]
++pub(crate) fn Platform() -> DOMString {
++    DOMString::from_static("Haiku")
++}
++
++#[expect(non_snake_case)]
+ #[cfg(target_os = "macos")]
+ pub(crate) fn Platform() -> DOMString {
+     DOMString::from_static("Mac")
