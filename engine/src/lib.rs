@@ -21,6 +21,7 @@ use servo::{
     Preferences, RenderingContext, ServoBuilder, SimpleDialog, WebView, WebViewBuilder,
     WebViewDelegate, WebViewPoint, WheelDelta, WheelEvent, WheelMode, WindowRenderingContext,
 };
+use servo::{AllowOrDenyRequest, ConsoleLogLevel, NavigationRequest, Theme};
 
 static PROTOCOL_MAP: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 static LOGGER_ONCE: Once = Once::new();
@@ -331,6 +332,10 @@ const R5_EV_NEW_WINDOW: i32 = 13;
 const R5_EV_CLOSE: i32 = 14;
 const R5_EV_FAVICON: i32 = 15;
 const R5_EV_DIALOG: i32 = 16;
+// Since r5servo 0.8.0-7.
+const R5_EV_CONSOLE: i32 = 18;
+const R5_EV_EXTERNAL: i32 = 19;
+const R5_EV_DOWNLOAD: i32 = 20;
 
 const OK: i32 = 0;
 const NO_INIT: i32 = -1;
@@ -445,6 +450,8 @@ enum Pending {
     Auth(AuthenticationRequest),
     File(servo::FilePicker),
     Menu(servo::ContextMenu),
+    // "Leave this page?" (beforeunload). Dropping it lets the page go.
+    Unload(AllowOrDenyRequest),
 }
 
 struct Engine {
@@ -741,6 +748,7 @@ impl WebViewDelegate for Bridge {
         let Some(servo_engine) = shared_servo() else {
             return;
         };
+        let servo_for_child = Rc::clone(&servo_engine);
         // The new page becomes a tab in the opener's window: same context.
         let Some((context, storage_w, storage_h, gl)) =
             context_of(parent, width, height).or_else(|| make_context(width, height))
@@ -758,6 +766,7 @@ impl WebViewDelegate for Bridge {
                     .builder(context as Rc<dyn RenderingContext>)
                     .delegate(bridge)
                     .clipboard_delegate(Rc::new(R5Clipboard))
+                    .user_content_manager(user_content(&servo_for_child))
                     .build()
             },
             None,
@@ -775,6 +784,59 @@ impl WebViewDelegate for Bridge {
         event.a = 1;
         event.current = child as usize as i64;
         emit(parent, event);
+    }
+
+    fn show_console_message(&self, _webview: WebView, level: ConsoleLogLevel, message: String) {
+        // The page's console: Aomi keeps the lines for its technical page
+        // and AOMI_LOG. a: 0 log, 1 info, 2 warning, 3 error. A line is cut
+        // at 2000 characters; an address in it loses a sign-in.
+        let mut event = Ev::new(R5_EV_CONSOLE);
+        event.a = match level {
+            ConsoleLogLevel::Error => 3,
+            ConsoleLogLevel::Warn => 2,
+            ConsoleLogLevel::Info => 1,
+            _ => 0,
+        };
+        let short: String = message.chars().take(2000).collect();
+        event.text = shown_text(&short);
+        emit(engine_ptr(self), event);
+    }
+
+    fn request_unload(&self, _webview: WebView, request: AllowOrDenyRequest) {
+        // The page has a beforeunload handler: ask before it is left. The
+        // answer is r5_servo_control_answer() (accept: leave).
+        let engine = engine_ptr(self);
+        if engine.is_null() {
+            return;
+        }
+        let mut event = Ev::new(R5_EV_DIALOG);
+        event.a = 4;
+        event.current = set_pending(engine, Pending::Unload(request));
+        emit(engine, event);
+    }
+
+    fn request_navigation(&self, _webview: WebView, request: NavigationRequest) {
+        // Servo asks before every navigation a page starts. An address
+        // that is not for a web page goes to the program that handles it
+        // (mailto:, tel:, ...), and a link to a file Servo cannot show
+        // becomes a download; the page stays where it is.
+        let engine = engine_ptr(self);
+        let kind = navigation_kind(&request.url);
+        if kind == 0 || engine.is_null() {
+            request.allow();
+            return;
+        }
+        let mut event = Ev::new(kind);
+        event.url = if kind == R5_EV_DOWNLOAD {
+            // The download fetches this address itself; a sign-in in it
+            // stays out of every log (Aomi logs shown addresses only).
+            request.url.to_string()
+        } else {
+            shown_url(&request.url)
+        };
+        event.text = shown_url(&request.url);
+        emit(engine, event);
+        request.deny();
     }
 
     fn request_permission(&self, _webview: WebView, request: PermissionRequest) {
@@ -922,6 +984,38 @@ fn set_pending(engine: *mut Engine, control: Pending) -> i64 {
     id
 }
 
+// What a navigation to `url` is: 0 a page Servo loads, R5_EV_EXTERNAL an
+// address for another program, R5_EV_DOWNLOAD a file to save.
+fn navigation_kind(url: &url::Url) -> i32 {
+    match url.scheme() {
+        "http" | "https" => {}
+        "data" | "file" | "about" | "blob" | "javascript" | "resource" | "view-source" => {
+            return 0;
+        }
+        _ => return R5_EV_EXTERNAL,
+    }
+    let last = url
+        .path_segments()
+        .and_then(|mut segments| segments.next_back())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    // Files Servo has no viewer or player for on Haiku (no PDF viewer, no
+    // media backend). An address without one of these endings loads as a
+    // page, as before.
+    const ENDINGS: &[&str] = &[
+        ".zip", ".7z", ".rar", ".gz", ".tgz", ".bz2", ".xz", ".zst", ".tar", ".hpkg",
+        ".iso", ".img", ".dmg", ".exe", ".msi", ".deb", ".rpm", ".apk", ".jar",
+        ".torrent", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt",
+        ".ods", ".odp", ".epub", ".mp3", ".flac", ".ogg", ".wav", ".mp4", ".mkv",
+        ".webm", ".avi", ".mov",
+    ];
+    if ENDINGS.iter().any(|ending| last.len() > ending.len() && last.ends_with(ending)) {
+        R5_EV_DOWNLOAD
+    } else {
+        0
+    }
+}
+
 /// The answer to page control `id` (from R5_EV_DIALOG). accept = 0 cancels.
 /// For a select list, value is the chosen option's id. For a prompt, text is
 /// the entered text; for a sign-in "user\npassword"; for a file upload one
@@ -1021,6 +1115,13 @@ pub extern "C" fn r5_servo_control_answer(
             match action {
                 Some(action) => menu.select(action),
                 None => menu.dismiss(),
+            }
+        }
+        Pending::Unload(request) => {
+            if accept != 0 {
+                request.allow();
+            } else {
+                request.deny();
             }
         }
 
@@ -1210,6 +1311,102 @@ fn context_in_use(context: &Rc<WindowRenderingContext>) -> Option<bool> {
 }
 
 // The one Servo of this thread, built on first use.
+// Servo 0.8 has only a skeleton of the Web Animations API behind a
+// preference that is off (dom_web_animations_enabled: no play state, no
+// finish event, no cancel), so Element.animate() is missing in pages. Svelte 5
+// shows a component through animate() and waits for its finish event; without
+// it a component with a transition never appears (found on DPG Media's
+// cookie wall, tweakers.net, 27 Nov 2026; that page needs more than this).
+// This stand-in runs before the page's own scripts, only where animate() is
+// missing: the animation jumps to its end after its duration and reports
+// that it finished. A page sees no movement, but its content and its
+// buttons appear. Written for R5 (MIT), not a copy of a polyfill.
+const ANIMATE_FALLBACK: &str = r#"(function () {
+  if (typeof Element === "undefined" || Element.prototype.animate) return;
+  function lastFrame(keyframes) {
+    if (Array.isArray(keyframes)) return keyframes.length ? keyframes[keyframes.length - 1] : null;
+    if (!keyframes || typeof keyframes !== "object") return null;
+    var frame = {};
+    for (var key in keyframes) {
+      var value = keyframes[key];
+      frame[key] = Array.isArray(value) ? value[value.length - 1] : value;
+    }
+    return frame;
+  }
+  Element.prototype.animate = function (keyframes, options) {
+    var element = this;
+    var duration = typeof options === "number" ? options
+      : (options && typeof options.duration === "number" ? options.duration : 0);
+    var delay = options && typeof options.delay === "number" ? options.delay : 0;
+    var fill = options && typeof options === "object" ? options.fill : undefined;
+    var end = lastFrame(keyframes);
+    var listeners = [];
+    var resolveFinished;
+    var animation = {
+      id: options && options.id ? options.id : "", effect: null, timeline: null,
+      playState: "running", pending: false, playbackRate: 1, currentTime: 0,
+      startTime: null, onfinish: null, oncancel: null, onremove: null
+    };
+    animation.finished = new Promise(function (resolve) { resolveFinished = resolve; });
+    animation.ready = Promise.resolve(animation);
+    function apply(frame) {
+      if (!frame) return;
+      for (var key in frame) {
+        if (key === "offset" || key === "easing" || key === "composite") continue;
+        try { element.style[key] = frame[key]; } catch (e) {}
+      }
+    }
+    function fire(type, handler) {
+      var event = { type: type, target: animation, currentTime: duration, timelineTime: null };
+      if (typeof handler === "function") { try { handler.call(animation, event); } catch (e) { setTimeout(function () { throw e; }); } }
+      listeners.forEach(function (entry) { if (entry[0] === type) { try { entry[1].call(animation, event); } catch (e) {} } });
+    }
+    animation.finish = function () {
+      if (animation.playState !== "running" && animation.playState !== "paused") return;
+      animation.playState = "finished";
+      animation.currentTime = duration;
+      if (fill === "forwards" || fill === "both") apply(end);
+      fire("finish", animation.onfinish);
+      resolveFinished(animation);
+    };
+    animation.cancel = function () {
+      if (animation.playState === "idle") return;
+      animation.playState = "idle";
+      fire("cancel", animation.oncancel);
+    };
+    animation.play = function () { if (animation.playState === "idle") animation.playState = "running"; };
+    animation.pause = function () {};
+    animation.reverse = function () {};
+    animation.persist = function () {};
+    animation.commitStyles = function () { apply(end); };
+    animation.updatePlaybackRate = function (rate) { animation.playbackRate = rate; };
+    animation.addEventListener = function (type, handler) { listeners.push([type, handler]); };
+    animation.removeEventListener = function (type, handler) {
+      listeners = listeners.filter(function (entry) { return entry[0] !== type || entry[1] !== handler; });
+    };
+    setTimeout(animation.finish, Math.max(0, duration + delay));
+    return animation;
+  };
+  if (!Element.prototype.getAnimations) Element.prototype.getAnimations = function () { return []; };
+  if (typeof document !== "undefined" && !document.getAnimations) document.getAnimations = function () { return []; };
+})();"#;
+
+// One user content manager per process (one Servo), with the stand-ins.
+fn user_content(servo_engine: &servo::Servo) -> Rc<servo::UserContentManager> {
+    thread_local! {
+        static CONTENT: RefCell<Option<Rc<servo::UserContentManager>>> = const { RefCell::new(None) };
+    }
+    CONTENT.with(|slot| {
+        if let Some(existing) = slot.borrow().as_ref() {
+            return Rc::clone(existing);
+        }
+        let manager = Rc::new(servo::UserContentManager::new(servo_engine));
+        manager.add_script(Rc::new(servo::UserScript::new(ANIMATE_FALLBACK.to_string(), None)));
+        *slot.borrow_mut() = Some(Rc::clone(&manager));
+        manager
+    })
+}
+
 fn shared_servo() -> Option<Rc<servo::Servo>> {
     if SHUT_DOWN.with(|flag| flag.get()) {
         println!("r5-servo create-after-shutdown");
@@ -1392,7 +1589,8 @@ fn create_engine(
             let mut builder =
                 WebViewBuilder::new(&servo_for_builder, context as Rc<dyn RenderingContext>)
                     .delegate(bridge)
-                    .clipboard_delegate(Rc::new(R5Clipboard));
+                    .clipboard_delegate(Rc::new(R5Clipboard))
+                    .user_content_manager(user_content(&servo_for_builder));
             if let Some(url) = initial {
                 println!("r5-servo initial {}", shown_url(&url));
                 builder = builder.url(url);
@@ -1751,6 +1949,44 @@ pub extern "C" fn r5_servo_zoom(engine: *mut Engine, factor: f32, text_only: i32
     if let Ok(inner) = unsafe { (*engine).inner.try_borrow() } {
         if let Some(wv) = inner.webview.as_ref() {
             wv.set_page_zoom(factor);
+        }
+    }
+    OK
+}
+
+/// The page's light or dark preference (prefers-color-scheme): dark != 0
+/// is dark. Since r5servo 0.8.0-7.
+#[no_mangle]
+pub extern "C" fn r5_servo_set_theme(engine: *mut Engine, dark: i32) -> i32 {
+    if !alive(engine) {
+        return NO_INIT;
+    }
+    if let Ok(inner) = unsafe { (*engine).inner.try_borrow() } {
+        if let Some(wv) = inner.webview.as_ref() {
+            wv.notify_theme_change(if dark != 0 { Theme::Dark } else { Theme::Light });
+        }
+    }
+    OK
+}
+
+/// How many device pixels one CSS pixel is: 1 at R5's 12 point system font,
+/// 1.5 at 18 points. The frame keeps the view's size; the page lays out
+/// larger. 0.5 to 4. Since r5servo 0.8.0-7.
+#[no_mangle]
+pub extern "C" fn r5_servo_set_scale(engine: *mut Engine, scale: f32) -> i32 {
+    if !(0.5..=4.0).contains(&scale) {
+        return BAD_VALUE;
+    }
+    if !alive(engine) {
+        return NO_INIT;
+    }
+    if let Ok(inner) = unsafe { (*engine).inner.try_borrow() } {
+        if let Some(wv) = inner.webview.as_ref() {
+            // Scale is euclid's tuple struct; its value is public, so the
+            // engine needs no euclid dependency of its own.
+            let mut factor = wv.hidpi_scale_factor();
+            factor.0 = scale;
+            wv.set_hidpi_scale_factor(factor);
         }
     }
     OK
