@@ -30,7 +30,15 @@ enum {
 	R5_EV_CLOSE				= 14,
 	R5_EV_FAVICON			= 15,
 	R5_EV_DIALOG			= 16,
-	R5_EV_PAGE_TEXT			= 17
+	R5_EV_PAGE_TEXT			= 17,
+	// Since 0.8.0-7. CONSOLE: a page's console line in text, a: 0 log,
+	// 1 info, 2 warning, 3 error. EXTERNAL: the page went to url, an
+	// address for another program (mailto:, tel:, ...); it stays where it
+	// is. DOWNLOAD: the page went to url, a file Servo has no viewer for
+	// (by its ending); text is the address without a sign-in, for display.
+	R5_EV_CONSOLE			= 18,
+	R5_EV_EXTERNAL			= 19,
+	R5_EV_DOWNLOAD			= 20
 };
 
 
@@ -211,10 +219,17 @@ r5_servo*	r5_servo_create_sharing(r5_servo* sibling, int32 width,
 	int32 height, const char* document, int32 document_is_html,
 	r5_servo_callback callback, void* context);
 
+// Since 0.8.0-7. The page's light or dark preference (prefers-color-scheme):
+// dark != 0 is dark. A new engine starts light.
+status_t	r5_servo_set_theme(r5_servo* engine, int32 dark);
 
+// Since 0.8.0-7. Device pixels per CSS pixel, 0.5 to 4 (1 at a 12 point
+// system font): the page lays out larger, the frame keeps the view's size.
+status_t	r5_servo_set_scale(r5_servo* engine, float scale);
 
-
-
+// R5_EV_DIALOG kind 4 (since 0.8.0-7): "leave this page?" for a page with a
+// beforeunload handler. Answer it with r5_servo_control_answer(): accept
+// leaves, 0 stays.
 }
 
 

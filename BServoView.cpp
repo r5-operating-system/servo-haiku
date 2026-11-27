@@ -401,6 +401,18 @@ r5_servo_ask_control(BView* view, int32 kind, const char* text, float x,
 			*accept = window->Go(&reply, NULL) ? 1 : 0;
 			break;
 		}
+		case 4:
+		{
+			// Leave this page (beforeunload). The caller may pass its own,
+			// translated question as text; ok leaves, cancel stays.
+			BString question(all.Length() > 0 ? all
+				: BString("Leave this page? Changes you made may not be saved."));
+			BAlert* alert = new BAlert("page", question.String(), l.cancel,
+				l.ok, NULL, B_WIDTH_AS_USUAL, B_WARNING_ALERT);
+			alert->SetShortcut(0, B_ESCAPE);
+			*accept = alert->Go() == 1 ? 1 : 0;
+			break;
+		}
 		case 5:
 		{
 			// Sign-in: "address" and maybe "proxy" on a second line.

@@ -34,7 +34,7 @@ PKG = os.environ.get("HAIKU_PACKAGE") or (
 STRIP = Path(CROSS) / "bin/x86_64-unknown-haiku-strip" if CROSS else None
 SO_SRC = WORK / "r5servo-out" / "libr5servo.so"
 
-VERSION = "0.8.0-6"
+VERSION = "0.8.0-7"
 PKG_NAME = f"r5servo-{VERSION}-x86_64.hpkg"
 SOURCE = "https://github.com/r5-operating-system/servo-haiku"
 
